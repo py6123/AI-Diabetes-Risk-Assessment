@@ -213,7 +213,7 @@ header[data-testid="stHeader"] {
     letter-spacing: -1.3px;
     line-height: 1.07;
 
-    max-width: 760px;
+    max-width: 800px;
 }
 
 .hero-text {
@@ -222,7 +222,7 @@ header[data-testid="stHeader"] {
 
     color: #dbeafe;
 
-    max-width: 690px;
+    max-width: 720px;
 
     font-size: 1.02rem;
     line-height: 1.7;
@@ -288,7 +288,7 @@ header[data-testid="stHeader"] {
 
 
 /* =====================================================
-   LEFT GUIDE CARD
+   GUIDE CARDS
 ===================================================== */
 
 .guide-card {
@@ -390,7 +390,7 @@ header[data-testid="stHeader"] {
 
 
 /* =====================================================
-   RIGHT QUICK GUIDE
+   QUICK GUIDE
 ===================================================== */
 
 .quick-card {
@@ -408,7 +408,7 @@ header[data-testid="stHeader"] {
 }
 
 .quick-item {
-    padding: 13px 0;
+    padding: 12px 0;
 
     border-bottom: 1px solid #f1f5f9;
 }
@@ -618,7 +618,7 @@ div[data-testid="stButton"] button {
 
     margin-top: 10px;
 
-    max-width: 850px;
+    max-width: 900px;
 }
 
 .result-footer {
@@ -682,18 +682,26 @@ div[data-testid="stButton"] button {
 
 
 /* =====================================================
-   WELLBEING CARDS
+   INFO CARDS
 ===================================================== */
 
-.wellbeing-card {
+.wellbeing-card,
+.learn-card,
+.dataset-card {
     background: white;
 
     border: 1px solid #e2e8f0;
     border-radius: 18px;
 
     padding: 22px;
+}
 
+.wellbeing-card {
     min-height: 180px;
+}
+
+.learn-card {
+    min-height: 170px;
 }
 
 .wellbeing-icon {
@@ -701,38 +709,7 @@ div[data-testid="stButton"] button {
     margin-bottom: 10px;
 }
 
-.wellbeing-title {
-    color: #0f172a;
-
-    font-size: 1rem;
-    font-weight: 800;
-
-    margin-bottom: 7px;
-}
-
-.wellbeing-text {
-    color: #64748b;
-
-    font-size: 0.82rem;
-    line-height: 1.55;
-}
-
-
-/* =====================================================
-   LEARN CARDS
-===================================================== */
-
-.learn-card {
-    background: white;
-
-    border: 1px solid #e2e8f0;
-    border-radius: 17px;
-
-    padding: 21px;
-
-    min-height: 170px;
-}
-
+.wellbeing-title,
 .learn-title {
     color: #0f172a;
 
@@ -742,6 +719,7 @@ div[data-testid="stButton"] button {
     margin-bottom: 7px;
 }
 
+.wellbeing-text,
 .learn-text {
     color: #64748b;
 
@@ -817,6 +795,27 @@ DATA_PATH = BASE_DIR / "diabetes.csv"
 
 
 # =========================================================
+# LOAD DATASET
+# =========================================================
+
+@st.cache_data
+def load_dataset():
+    return pd.read_csv(DATA_PATH)
+
+
+try:
+    dataset = load_dataset()
+
+except Exception as error:
+
+    st.error(
+        f"Unable to load the diabetes dataset: {error}"
+    )
+
+    st.stop()
+
+
+# =========================================================
 # LOAD MODEL
 # =========================================================
 
@@ -840,13 +839,11 @@ except Exception as error:
 
 
 # =========================================================
-# REBUILD ORIGINAL DATA SCALING
+# PREPARE ORIGINAL DATA SCALING
 # =========================================================
 
 @st.cache_resource
 def prepare_scaling():
-
-    dataset = pd.read_csv(DATA_PATH)
 
     cleaned = dataset.copy()
 
@@ -876,6 +873,7 @@ def prepare_scaling():
             )
         )
 
+
     scaler = MinMaxScaler(
         feature_range=(0, 1)
     )
@@ -884,7 +882,8 @@ def prepare_scaling():
         cleaned
     )
 
-    # Original Kaggle notebook features:
+
+    # Original supplied notebook:
     # 1 = Glucose
     # 4 = Insulin
     # 5 = BMI
@@ -897,6 +896,7 @@ def prepare_scaling():
         7
     ]
 
+
     minimum_values = scaler.data_min_[
         selected_indices
     ]
@@ -905,19 +905,50 @@ def prepare_scaling():
         selected_indices
     ]
 
-    return minimum_values, value_ranges
+
+    training_ranges = {
+        "Glucose": (
+            float(cleaned["Glucose"].min()),
+            float(cleaned["Glucose"].max())
+        ),
+
+        "Insulin": (
+            float(cleaned["Insulin"].min()),
+            float(cleaned["Insulin"].max())
+        ),
+
+        "BMI": (
+            float(cleaned["BMI"].min()),
+            float(cleaned["BMI"].max())
+        ),
+
+        "Age": (
+            float(cleaned["Age"].min()),
+            float(cleaned["Age"].max())
+        )
+    }
+
+
+    return (
+        minimum_values,
+        value_ranges,
+        training_ranges
+    )
 
 
 try:
 
-    FEATURE_MINS, FEATURE_RANGES = (
-        prepare_scaling()
-    )
+    (
+        FEATURE_MINS,
+        FEATURE_RANGES,
+        TRAINING_RANGES
+    ) = prepare_scaling()
+
 
 except Exception as error:
 
     st.error(
-        f"Unable to prepare the dataset: {error}"
+        f"Unable to prepare the model data: {error}"
     )
 
     st.stop()
@@ -930,9 +961,14 @@ except Exception as error:
 DEFAULT_STATE = {
     "form_version": 0,
     "validation_message": "",
+    "training_warnings": [],
     "prediction_result": None,
     "submitted_values": None,
-    "scroll_to_result": False
+    "scroll_to_result": False,
+
+    "scenario_result": None,
+    "scenario_values": None,
+    "scenario_warnings": []
 }
 
 
@@ -943,7 +979,7 @@ for key, value in DEFAULT_STATE.items():
 
 
 # =========================================================
-# CURRENT INPUT KEYS
+# HELPERS
 # =========================================================
 
 def get_input_keys():
@@ -953,14 +989,11 @@ def get_input_keys():
     return {
         "glucose": f"glucose_{version}",
         "insulin": f"insulin_{version}",
-        "bmi": f"bmi_{version}",
+        "weight": f"weight_{version}",
+        "height": f"height_{version}",
         "age": f"age_{version}"
     }
 
-
-# =========================================================
-# FORMAT FIELD NAMES
-# =========================================================
 
 def join_names(items):
 
@@ -976,8 +1009,119 @@ def join_names(items):
     )
 
 
+def format_number(value):
+
+    if float(value).is_integer():
+        return str(int(value))
+
+    return f"{value:.2f}"
+
+
+def calculate_bmi(weight_kg, height_cm):
+
+    height_m = height_cm / 100
+
+    return weight_kg / (height_m ** 2)
+
+
+def build_scaled_input(
+    glucose,
+    insulin,
+    bmi,
+    age
+):
+
+    raw_input = np.array(
+        [
+            glucose,
+            insulin,
+            bmi,
+            age
+        ],
+        dtype=float
+    )
+
+    scaled_input = (
+        raw_input
+        - FEATURE_MINS
+    ) / FEATURE_RANGES
+
+    return scaled_input.reshape(
+        1,
+        -1
+    )
+
+
+def run_prediction(
+    glucose,
+    insulin,
+    bmi,
+    age
+):
+
+    scaled_input = build_scaled_input(
+        glucose,
+        insulin,
+        bmi,
+        age
+    )
+
+    prediction = model.predict(
+        scaled_input
+    )
+
+    return int(
+        prediction[0]
+    )
+
+
+def get_training_warnings(
+    glucose,
+    insulin,
+    bmi,
+    age
+):
+
+    warnings = []
+
+    values = {
+        "Glucose": glucose,
+        "Insulin": insulin,
+        "BMI": bmi,
+        "Age": age
+    }
+
+
+    for feature, value in values.items():
+
+        minimum, maximum = (
+            TRAINING_RANGES[feature]
+        )
+
+        if value < minimum or value > maximum:
+
+            warnings.append(
+                f"{feature} is outside the range represented "
+                f"in the training dataset "
+                f"({format_number(minimum)}–"
+                f"{format_number(maximum)}). "
+                f"The prediction may be less reliable."
+            )
+
+
+    return warnings
+
+
+def result_label(result):
+
+    if result == 0:
+        return "Lower predicted likelihood"
+
+    return "Higher predicted likelihood"
+
+
 # =========================================================
-# PREDICTION
+# MAIN ASSESSMENT
 # =========================================================
 
 def assess_diabetes():
@@ -986,26 +1130,34 @@ def assess_diabetes():
 
     # Reset previous output
     st.session_state.validation_message = ""
+    st.session_state.training_warnings = []
     st.session_state.prediction_result = None
     st.session_state.submitted_values = None
+
+    st.session_state.scenario_result = None
+    st.session_state.scenario_values = None
+    st.session_state.scenario_warnings = []
+
 
     values = {}
 
     missing_fields = []
     invalid_numeric_fields = []
     non_positive_fields = []
+    plausibility_errors = []
 
     age_invalid = False
 
 
     # =====================================================
-    # GLUCOSE, INSULIN AND BMI
+    # NUMERIC FIELDS
     # =====================================================
 
     numeric_fields = {
         "glucose": "Glucose",
         "insulin": "Insulin",
-        "bmi": "BMI"
+        "weight": "Weight",
+        "height": "Height"
     }
 
 
@@ -1018,7 +1170,7 @@ def assess_diabetes():
         ).strip()
 
 
-        # Empty input
+        # Empty
         if value_text == "":
 
             missing_fields.append(label)
@@ -1026,16 +1178,14 @@ def assess_diabetes():
             continue
 
 
-        # Numeric validation
+        # Numeric
         try:
 
             value = float(
                 value_text
             )
 
-            # Reject NaN and infinity
             if not np.isfinite(value):
-
                 raise ValueError
 
 
@@ -1045,23 +1195,48 @@ def assess_diabetes():
                 label
             )
 
-            # Only clear the incorrect field
             st.session_state[key] = ""
 
             continue
 
 
-        # Positive-value validation
+        # Positive
         if value <= 0:
 
             non_positive_fields.append(
                 label
             )
 
-            # Only clear the incorrect field
             st.session_state[key] = ""
 
             continue
+
+
+        # Basic plausibility checks
+        if label == "Weight":
+
+            if value < 10 or value > 500:
+
+                plausibility_errors.append(
+                    "Weight must be between 10 and 500 kg."
+                )
+
+                st.session_state[key] = ""
+
+                continue
+
+
+        if label == "Height":
+
+            if value < 50 or value > 250:
+
+                plausibility_errors.append(
+                    "Height must be between 50 and 250 cm."
+                )
+
+                st.session_state[key] = ""
+
+                continue
 
 
         values[label] = value
@@ -1098,7 +1273,6 @@ def assess_diabetes():
 
             age_invalid = True
 
-            # Only clear Age
             st.session_state[
                 age_key
             ] = ""
@@ -1117,19 +1291,29 @@ def assess_diabetes():
                 ] = ""
 
 
+            elif age > 120:
+
+                plausibility_errors.append(
+                    "Age must be between 1 and 120 years."
+                )
+
+                st.session_state[
+                    age_key
+                ] = ""
+
+
             else:
 
                 values["Age"] = age
 
 
     # =====================================================
-    # ERROR MESSAGES
+    # BUILD ERROR MESSAGES
     # =====================================================
 
     messages = []
 
 
-    # Empty fields
     if missing_fields:
 
         names = join_names(
@@ -1149,7 +1333,6 @@ def assess_diabetes():
             )
 
 
-    # Invalid numeric fields
     if invalid_numeric_fields:
 
         names = join_names(
@@ -1171,7 +1354,6 @@ def assess_diabetes():
             )
 
 
-    # Age must be integer
     if age_invalid:
 
         messages.append(
@@ -1179,7 +1361,6 @@ def assess_diabetes():
         )
 
 
-    # Zero or negative values
     if non_positive_fields:
 
         names = join_names(
@@ -1191,7 +1372,12 @@ def assess_diabetes():
         )
 
 
-    # Stop prediction if validation fails
+    messages.extend(
+        plausibility_errors
+    )
+
+
+    # Stop if hard validation fails
     if messages:
 
         st.session_state.validation_message = (
@@ -1202,31 +1388,29 @@ def assess_diabetes():
 
 
     # =====================================================
-    # SCALE USER INPUT
+    # BACKEND BMI CALCULATION
     # =====================================================
 
-    raw_input = np.array(
-        [
-            values["Glucose"],
-            values["Insulin"],
-            values["BMI"],
-            values["Age"]
-        ],
-        dtype=float
+    bmi = calculate_bmi(
+        values["Weight"],
+        values["Height"]
     )
 
 
-    scaled_input = (
-        raw_input
-        - FEATURE_MINS
-    ) / FEATURE_RANGES
+    # =====================================================
+    # TRAINING-DATA RANGE WARNINGS
+    # =====================================================
+
+    warnings = get_training_warnings(
+        values["Glucose"],
+        values["Insulin"],
+        bmi,
+        values["Age"]
+    )
 
 
-    scaled_input = (
-        scaled_input.reshape(
-            1,
-            -1
-        )
+    st.session_state.training_warnings = (
+        warnings
     )
 
 
@@ -1234,13 +1418,11 @@ def assess_diabetes():
     # MODEL PREDICTION
     # =====================================================
 
-    prediction = model.predict(
-        scaled_input
-    )
-
-
-    prediction_value = int(
-        prediction[0]
+    prediction_value = run_prediction(
+        values["Glucose"],
+        values["Insulin"],
+        bmi,
+        values["Age"]
     )
 
 
@@ -1249,16 +1431,17 @@ def assess_diabetes():
     )
 
 
-    # Save the values used for the result cards
+    # Save all user-entered and calculated values
     st.session_state.submitted_values = {
         "Glucose": values["Glucose"],
         "Insulin": values["Insulin"],
-        "BMI": values["BMI"],
+        "Weight": values["Weight"],
+        "Height": values["Height"],
+        "BMI": bmi,
         "Age": values["Age"]
     }
 
 
-    # Automatically move the user to the result
     st.session_state.scroll_to_result = True
 
 
@@ -1268,16 +1451,20 @@ def assess_diabetes():
 
 def clear_everything():
 
-    # New widget keys force all input boxes to reset
+    # Force new widget keys
     st.session_state.form_version += 1
 
     st.session_state.validation_message = ""
+    st.session_state.training_warnings = []
 
     st.session_state.prediction_result = None
-
     st.session_state.submitted_values = None
 
     st.session_state.scroll_to_result = False
+
+    st.session_state.scenario_result = None
+    st.session_state.scenario_values = None
+    st.session_state.scenario_warnings = []
 
 
 # =========================================================
@@ -1327,12 +1514,13 @@ Check your diabetes risk in under a minute
 </div>
 
 <div class="hero-text">
-Enter four health measurements to receive an instant
-AI-assisted screening result and easy-to-understand guidance.
+Enter your health measurements to receive an
+AI-assisted screening result, calculated BMI,
+and easy-to-understand guidance.
 </div>
 
 <div class="hero-pill">
-Simple • Fast • Educational
+Simple • Interactive • Educational
 </div>
 
 </div>
@@ -1353,13 +1541,14 @@ Enter your health measurements
 </div>
 
 <div class="section-description">
-Complete all four fields below, then select the Check My Diabetes Risk button.
+Complete all fields below. BMI will be calculated automatically
+from your weight and height before the values are sent to the model.
 </div>
 """)
 
 
 # =========================================================
-# THREE-COLUMN ASSESSMENT LAYOUT
+# THREE-COLUMN LAYOUT
 # =========================================================
 
 left_guide, main_form, right_guide = st.columns(
@@ -1369,7 +1558,7 @@ left_guide, main_form, right_guide = st.columns(
 
 
 # =========================================================
-# LEFT: BEFORE YOU BEGIN
+# LEFT GUIDE
 # =========================================================
 
 with left_guide:
@@ -1386,8 +1575,8 @@ with left_guide:
     </div>
 
     <div class="card-text">
-    Have these four measurements ready.
-    Enter them exactly as recorded before starting your assessment.
+    Have your health measurements ready.
+    Weight and height are used to calculate BMI automatically.
     </div>
 
     <div class="small-heading">
@@ -1406,7 +1595,12 @@ with left_guide:
 
     <div class="check-item">
     <div class="check-circle">✓</div>
-    <div>Body Mass Index</div>
+    <div>Weight in kilograms</div>
+    </div>
+
+    <div class="check-item">
+    <div class="check-circle">✓</div>
+    <div>Height in centimetres</div>
     </div>
 
     <div class="check-item">
@@ -1419,7 +1613,7 @@ with left_guide:
 
 
 # =========================================================
-# CENTER: INPUT FORM
+# MAIN FORM
 # =========================================================
 
 with main_form:
@@ -1431,61 +1625,81 @@ with main_form:
         f"assessment_form_{st.session_state.form_version}"
     ):
 
-        first_left, first_right = st.columns(2)
+        row1_left, row1_right = (
+            st.columns(2)
+        )
 
 
-        with first_left:
+        with row1_left:
 
             st.text_input(
                 "Glucose",
                 placeholder="Enter glucose level",
                 key=input_keys["glucose"],
-                help=(
-                    "Enter your recorded glucose "
-                    "measurement as a number."
-                )
+                help="Enter your recorded glucose value."
             )
 
 
-        with first_right:
+        with row1_right:
 
             st.text_input(
                 "Insulin",
                 placeholder="Enter insulin level",
                 key=input_keys["insulin"],
-                help=(
-                    "Enter your recorded insulin "
-                    "measurement as a number."
-                )
+                help="Enter your recorded insulin value."
             )
 
 
-        second_left, second_right = st.columns(2)
+        row2_left, row2_right = (
+            st.columns(2)
+        )
 
 
-        with second_left:
+        with row2_left:
 
             st.text_input(
-                "BMI",
-                placeholder="e.g. 25.0",
-                key=input_keys["bmi"],
-                help=(
-                    "Enter Body Mass Index "
-                    "as a numeric value."
-                )
+                "Weight (kg)",
+                placeholder="e.g. 65",
+                key=input_keys["weight"],
+                help="Enter your body weight in kilograms."
             )
 
 
-        with second_right:
+        with row2_right:
+
+            st.text_input(
+                "Height (cm)",
+                placeholder="e.g. 165",
+                key=input_keys["height"],
+                help="Enter your height in centimetres."
+            )
+
+
+        row3_left, row3_right = (
+            st.columns(2)
+        )
+
+
+        with row3_left:
 
             st.text_input(
                 "Age",
                 placeholder="e.g. 30",
                 key=input_keys["age"],
-                help=(
-                    "Age must be entered "
-                    "as a whole number."
-                )
+                help="Age must be entered as a whole number."
+            )
+
+
+        with row3_right:
+
+            st.markdown(
+                """
+                **BMI calculation**
+
+                BMI is calculated automatically using:
+
+                `weight ÷ height²`
+                """
             )
 
 
@@ -1496,7 +1710,7 @@ with main_form:
         )
 
 
-    # Validation error
+    # Hard validation errors
     if st.session_state.validation_message:
 
         st.error(
@@ -1504,7 +1718,16 @@ with main_form:
         )
 
 
-    # Clear all values and previous result
+    # Soft training-data warnings
+    for warning in (
+        st.session_state.training_warnings
+    ):
+
+        st.warning(
+            warning
+        )
+
+
     st.button(
         "Clear form",
         on_click=clear_everything,
@@ -1513,7 +1736,7 @@ with main_form:
 
 
 # =========================================================
-# RIGHT: QUICK GUIDE
+# RIGHT GUIDE
 # =========================================================
 
 with right_guide:
@@ -1522,62 +1745,39 @@ with right_guide:
     <div class="quick-card">
 
     <div class="card-title">
-    What do these mean?
+    What happens in the app?
     </div>
 
     <div class="card-text">
-    A quick guide to the information used in your assessment.
+    Your information is checked and prepared before prediction.
     </div>
 
     <div class="quick-item">
-
-    <div class="quick-name">
-    Glucose
-    </div>
-
+    <div class="quick-name">1. Validate</div>
     <div class="quick-description">
-    A measurement related to blood sugar level.
+    The app checks for missing or invalid values.
     </div>
-
     </div>
-
 
     <div class="quick-item">
-
-    <div class="quick-name">
-    Insulin
-    </div>
-
+    <div class="quick-name">2. Calculate BMI</div>
     <div class="quick-description">
-    A hormone involved in controlling blood glucose.
+    Weight and height are converted into BMI in the backend.
     </div>
-
     </div>
-
 
     <div class="quick-item">
-
-    <div class="quick-name">
-    BMI
-    </div>
-
+    <div class="quick-name">3. Prepare data</div>
     <div class="quick-description">
-    A screening measure based on height and weight.
+    Model inputs are scaled using the original preprocessing approach.
     </div>
-
     </div>
-
 
     <div class="quick-item">
-
-    <div class="quick-name">
-    Age
-    </div>
-
+    <div class="quick-name">4. Predict</div>
     <div class="quick-description">
-    Used as additional context in the assessment.
+    The trained KNN model returns a diabetes-risk classification.
     </div>
-
     </div>
 
     </div>
@@ -1595,7 +1795,6 @@ if st.session_state.prediction_result is not None:
     st.divider()
 
 
-    # Anchor for automatic scrolling
     render_html("""
     <div id="assessment-result"></div>
     """)
@@ -1603,17 +1802,22 @@ if st.session_state.prediction_result is not None:
 
     render_html("""
     <div class="section-label">
-    Your Result
+    Original Assessment
     </div>
 
     <div class="section-title">
-    Diabetes risk assessment
+    Your diabetes risk result
+    </div>
+
+    <div class="section-description">
+    This result is your original assessment.
+    You can compare it with an adjusted scenario below.
     </div>
     """)
 
 
     # =====================================================
-    # RESULT CLASSIFICATION
+    # RESULT CARD
     # =====================================================
 
     if st.session_state.prediction_result == 0:
@@ -1636,8 +1840,8 @@ if st.session_state.prediction_result is not None:
         </div>
 
         <div class="result-footer">
-        This is a screening result rather than a medical diagnosis.
-        Continue regular health checks as appropriate.
+        This is a machine-learning screening result
+        and is not a medical diagnosis.
         </div>
 
         </div>
@@ -1673,7 +1877,7 @@ if st.session_state.prediction_result is not None:
 
 
     # =====================================================
-    # VALUES ENTERED
+    # MEASUREMENTS USED
     # =====================================================
 
     st.markdown("")
@@ -1684,18 +1888,20 @@ if st.session_state.prediction_result is not None:
     </div>
 
     <div class="section-title">
-    Measurements used in this assessment
+    Measurements used in the assessment
     </div>
     """)
 
 
-    values = st.session_state.submitted_values
+    values = (
+        st.session_state.submitted_values
+    )
 
 
-    card1, card2, card3, card4 = st.columns(4)
+    row1 = st.columns(3)
 
 
-    with card1:
+    with row1[0]:
 
         render_html(f"""
         <div class="measurement-card">
@@ -1709,14 +1915,14 @@ if st.session_state.prediction_result is not None:
         </div>
 
         <div class="measurement-help">
-        The glucose value entered for this assessment.
+        User-entered glucose value.
         </div>
 
         </div>
         """)
 
 
-    with card2:
+    with row1[1]:
 
         render_html(f"""
         <div class="measurement-card">
@@ -1730,35 +1936,83 @@ if st.session_state.prediction_result is not None:
         </div>
 
         <div class="measurement-help">
-        The insulin value entered for this assessment.
+        User-entered insulin value.
         </div>
 
         </div>
         """)
 
 
-    with card3:
+    with row1[2]:
 
         render_html(f"""
         <div class="measurement-card">
 
         <div class="measurement-name">
-        BMI
+        Calculated BMI
         </div>
 
         <div class="measurement-value">
-        {values["BMI"]:g}
+        {values["BMI"]:.2f}
         </div>
 
         <div class="measurement-help">
-        Body Mass Index used as an assessment input.
+        Calculated automatically from weight and height.
         </div>
 
         </div>
         """)
 
 
-    with card4:
+    st.markdown("")
+
+
+    row2 = st.columns(3)
+
+
+    with row2[0]:
+
+        render_html(f"""
+        <div class="measurement-card">
+
+        <div class="measurement-name">
+        Weight
+        </div>
+
+        <div class="measurement-value">
+        {values["Weight"]:g} kg
+        </div>
+
+        <div class="measurement-help">
+        Used to calculate BMI.
+        </div>
+
+        </div>
+        """)
+
+
+    with row2[1]:
+
+        render_html(f"""
+        <div class="measurement-card">
+
+        <div class="measurement-name">
+        Height
+        </div>
+
+        <div class="measurement-value">
+        {values["Height"]:g} cm
+        </div>
+
+        <div class="measurement-help">
+        Used to calculate BMI.
+        </div>
+
+        </div>
+        """)
+
+
+    with row2[2]:
 
         render_html(f"""
         <div class="measurement-card">
@@ -1772,7 +2026,7 @@ if st.session_state.prediction_result is not None:
         </div>
 
         <div class="measurement-help">
-        Age used as additional assessment context.
+        Included as a model input.
         </div>
 
         </div>
@@ -1780,18 +2034,330 @@ if st.session_state.prediction_result is not None:
 
 
     # =====================================================
-    # EXTRA USER FEATURES
+    # SCENARIO EXPLORER
     # =====================================================
 
     st.markdown("")
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        [
-            "Next steps",
-            "Everyday health",
-            "Understand your inputs",
-            "Technical notes"
-        ]
+    st.divider()
+
+
+    render_html("""
+    <div class="section-label">
+    Scenario Explorer
+    </div>
+
+    <div class="section-title">
+    Compare your original assessment with an adjusted scenario
+    </div>
+
+    <div class="section-description">
+    Select one measurement and increase it to see whether
+    the model's classification changes. This feature is
+    for educational model exploration only.
+    </div>
+    """)
+
+
+    with st.form(
+        "scenario_form"
+    ):
+
+        scenario_left, scenario_right = (
+            st.columns(2)
+        )
+
+
+        with scenario_left:
+
+            scenario_variable = st.selectbox(
+                "Measurement to increase",
+                [
+                    "Glucose",
+                    "Insulin",
+                    "Weight",
+                    "Height"
+                ]
+            )
+
+
+        with scenario_right:
+
+            increase_percentage = st.slider(
+                "Increase by",
+                min_value=5,
+                max_value=50,
+                value=10,
+                step=5,
+                format="%d%%"
+            )
+
+
+        compare_scenario = (
+            st.form_submit_button(
+                "Compare Scenario",
+                use_container_width=True
+            )
+        )
+
+
+    if compare_scenario:
+
+        adjusted = values.copy()
+
+        adjusted[
+            scenario_variable
+        ] = (
+            adjusted[
+                scenario_variable
+            ]
+            * (
+                1
+                + increase_percentage / 100
+            )
+        )
+
+
+        scenario_error = None
+
+
+        if (
+            adjusted["Weight"] > 500
+        ):
+
+            scenario_error = (
+                "The adjusted weight exceeds the "
+                "supported plausibility limit of 500 kg."
+            )
+
+
+        if (
+            adjusted["Height"] > 250
+        ):
+
+            scenario_error = (
+                "The adjusted height exceeds the "
+                "supported plausibility limit of 250 cm."
+            )
+
+
+        if scenario_error:
+
+            st.session_state.scenario_result = None
+            st.session_state.scenario_values = None
+            st.session_state.scenario_warnings = []
+
+            st.warning(
+                scenario_error
+            )
+
+
+        else:
+
+            adjusted_bmi = calculate_bmi(
+                adjusted["Weight"],
+                adjusted["Height"]
+            )
+
+            adjusted["BMI"] = (
+                adjusted_bmi
+            )
+
+
+            adjusted_prediction = (
+                run_prediction(
+                    adjusted["Glucose"],
+                    adjusted["Insulin"],
+                    adjusted["BMI"],
+                    adjusted["Age"]
+                )
+            )
+
+
+            scenario_warnings = (
+                get_training_warnings(
+                    adjusted["Glucose"],
+                    adjusted["Insulin"],
+                    adjusted["BMI"],
+                    adjusted["Age"]
+                )
+            )
+
+
+            st.session_state.scenario_result = (
+                adjusted_prediction
+            )
+
+            st.session_state.scenario_values = (
+                adjusted
+            )
+
+            st.session_state.scenario_warnings = (
+                scenario_warnings
+            )
+
+
+    # =====================================================
+    # SHOW SCENARIO COMPARISON
+    # =====================================================
+
+    if (
+        st.session_state.scenario_result
+        is not None
+    ):
+
+        adjusted = (
+            st.session_state.scenario_values
+        )
+
+        baseline_prediction = (
+            st.session_state.prediction_result
+        )
+
+        adjusted_prediction = (
+            st.session_state.scenario_result
+        )
+
+
+        comparison1, comparison2 = (
+            st.columns(2)
+        )
+
+
+        with comparison1:
+
+            st.markdown(
+                "### Original Assessment"
+            )
+
+            st.metric(
+                "Model classification",
+                result_label(
+                    baseline_prediction
+                )
+            )
+
+
+        with comparison2:
+
+            st.markdown(
+                "### Adjusted scenario"
+            )
+
+            st.metric(
+                "Model classification",
+                result_label(
+                    adjusted_prediction
+                )
+            )
+
+
+        comparison_table = pd.DataFrame(
+            {
+                "Measurement": [
+                    "Glucose",
+                    "Insulin",
+                    "Weight (kg)",
+                    "Height (cm)",
+                    "Calculated BMI",
+                    "Age"
+                ],
+
+                "Original Assessment": [
+                    values["Glucose"],
+                    values["Insulin"],
+                    values["Weight"],
+                    values["Height"],
+                    round(
+                        values["BMI"],
+                        2
+                    ),
+                    values["Age"]
+                ],
+
+                "Adjusted scenario": [
+                    round(
+                        adjusted["Glucose"],
+                        2
+                    ),
+                    round(
+                        adjusted["Insulin"],
+                        2
+                    ),
+                    round(
+                        adjusted["Weight"],
+                        2
+                    ),
+                    round(
+                        adjusted["Height"],
+                        2
+                    ),
+                    round(
+                        adjusted["BMI"],
+                        2
+                    ),
+                    adjusted["Age"]
+                ]
+            }
+        )
+
+
+        st.dataframe(
+            comparison_table,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+        if (
+            baseline_prediction
+            != adjusted_prediction
+        ):
+
+            st.info(
+                "The model classification changed "
+                "after the selected measurement was increased."
+            )
+
+
+        else:
+
+            st.info(
+                "The model classification remained the same "
+                "for this adjusted scenario."
+            )
+
+
+        for warning in (
+            st.session_state.scenario_warnings
+        ):
+
+            st.warning(
+                warning
+            )
+
+
+        st.caption(
+            "Scenario results demonstrate model behaviour only. "
+            "They should not be interpreted as a clinical forecast."
+        )
+
+
+    # =====================================================
+    # RESULT INFORMATION TABS
+    # =====================================================
+
+    st.markdown("")
+
+    tab1, tab2, tab3, tab4 = (
+        st.tabs(
+            [
+                "Next steps",
+                "Everyday health",
+                "Understand your inputs",
+                "Technical notes"
+            ]
+        )
     )
 
 
@@ -1801,17 +2367,21 @@ if st.session_state.prediction_result is not None:
 
     with tab1:
 
-        if st.session_state.prediction_result == 1:
+        if (
+            st.session_state.prediction_result
+            == 1
+        ):
 
             st.markdown(
                 """
                 ### What can you do next?
 
-                Your assessment returned a **higher predicted likelihood**.
+                Your original assessment returned a
+                **higher predicted likelihood**.
 
-                - Keep a record of the measurements used in this assessment.
-                - If you are concerned about the result, consider discussing it with a qualified healthcare professional.
-                - Do not use this screening result as a substitute for a medical diagnosis.
+                - Keep a record of the measurements used.
+                - If you are concerned about the result, consider speaking with a qualified healthcare professional.
+                - Do not use this screening result as a medical diagnosis.
                 """
             )
 
@@ -1822,11 +2392,12 @@ if st.session_state.prediction_result is not None:
                 """
                 ### What can you do next?
 
-                Your assessment returned a **lower predicted likelihood**.
+                Your original assessment returned a
+                **lower predicted likelihood**.
 
-                - Continue maintaining regular health checks.
+                - Continue regular health checks where appropriate.
                 - Keep track of important health measurements over time.
-                - Remember that a lower predicted likelihood does not rule out diabetes or other health conditions.
+                - A lower predicted likelihood does not rule out diabetes or other health conditions.
                 """
             )
 
@@ -1837,7 +2408,9 @@ if st.session_state.prediction_result is not None:
 
     with tab2:
 
-        wellness1, wellness2, wellness3 = st.columns(3)
+        wellness1, wellness2, wellness3 = (
+            st.columns(3)
+        )
 
 
         with wellness1:
@@ -1876,8 +2449,8 @@ if st.session_state.prediction_result is not None:
             </div>
 
             <div class="wellbeing-text">
-            Regular physical activity can support overall
-            health, mobility and weight management.
+            Regular physical activity can support
+            overall health, mobility and weight management.
             </div>
 
             </div>
@@ -1912,7 +2485,9 @@ if st.session_state.prediction_result is not None:
 
     with tab3:
 
-        learn1, learn2 = st.columns(2)
+        learn1, learn2 = (
+            st.columns(2)
+        )
 
 
         with learn1:
@@ -1926,8 +2501,8 @@ if st.session_state.prediction_result is not None:
 
             <div class="learn-text">
             Glucose refers to sugar circulating in the blood.
-            Its interpretation can depend on when and how the
-            measurement was taken.
+            Its interpretation can depend on when and how
+            the measurement was taken.
             </div>
 
             </div>
@@ -1943,7 +2518,7 @@ if st.session_state.prediction_result is not None:
 
             <div class="learn-text">
             Insulin is a hormone involved in regulating blood glucose.
-            Individual readings should be interpreted in the correct
+            A single reading should be interpreted in its correct
             clinical and laboratory context.
             </div>
 
@@ -1961,8 +2536,9 @@ if st.session_state.prediction_result is not None:
             </div>
 
             <div class="learn-text">
-            Body Mass Index is calculated using height and weight
-            and is commonly used as a general screening measure.
+            Body Mass Index is calculated using weight and height.
+            In this application, BMI is calculated automatically
+            in the backend before prediction.
             </div>
 
             </div>
@@ -1977,8 +2553,8 @@ if st.session_state.prediction_result is not None:
             </div>
 
             <div class="learn-text">
-            Age is included as contextual information used by the
-            prediction model alongside the other measurements.
+            Age is included as contextual information used by
+            the prediction model alongside the other model inputs.
             </div>
 
             </div>
@@ -1998,26 +2574,35 @@ if st.session_state.prediction_result is not None:
             **Model:**  
             K-Nearest Neighbors (KNN)
 
+            **User-entered information:**  
+            Glucose, Insulin, Weight, Height and Age
+
             **Model inputs:**  
-            Glucose, Insulin, BMI and Age
+            Glucose, Insulin, calculated BMI and Age
+
+            **BMI calculation:**  
+            BMI is calculated automatically from weight and height before prediction.
 
             **Prediction type:**  
             Binary classification
 
+            **Validation:**  
+            The application checks required fields, numeric values, positive values, age format and basic human plausibility.
+
+            **Training-data warning:**  
+            Values outside ranges represented in the supplied training dataset are allowed, but the user is warned that the prediction may be less reliable.
+
             **Preprocessing:**  
-            Input values are scaled using the same MinMax approach used with the supplied training dataset.
+            Zero values in selected medical fields are handled as missing values, missing values are filled using the feature mean, and model inputs are scaled using the same MinMax approach used in the supplied model development notebook.
 
             **Technology:**  
-            Python, Scikit-learn and Streamlit
-
-            **Model source:**  
-            Diabetes Risk Assessment model provided for the classroom project.
+            Python, Scikit-learn, Pandas, NumPy and Streamlit
             """
         )
 
 
     # =====================================================
-    # AUTO-SCROLL TO RESULT
+    # AUTO-SCROLL
     # =====================================================
 
     if st.session_state.scroll_to_result:
@@ -2025,6 +2610,7 @@ if st.session_state.prediction_result is not None:
         components.html(
             """
             <script>
+
             setTimeout(function () {
 
                 const element =
@@ -2038,15 +2624,269 @@ if st.session_state.prediction_result is not None:
                         behavior: "smooth",
                         block: "start"
                     });
+
                 }
 
             }, 200);
+
             </script>
             """,
             height=0
         )
 
         st.session_state.scroll_to_result = False
+
+
+# =========================================================
+# DATASET EXPLORER
+# =========================================================
+
+st.markdown("")
+
+st.divider()
+
+
+render_html("""
+<div class="section-label">
+Dataset Explorer
+</div>
+
+<div class="section-title">
+Explore the data behind the model
+</div>
+
+<div class="section-description">
+The application uses the supplied diabetes dataset for preprocessing
+and model context. You can inspect the original records,
+summary statistics and target distribution below.
+</div>
+""")
+
+
+dataset_metric1, dataset_metric2, dataset_metric3, dataset_metric4 = (
+    st.columns(4)
+)
+
+
+with dataset_metric1:
+
+    st.metric(
+        "Records",
+        f"{len(dataset):,}"
+    )
+
+
+with dataset_metric2:
+
+    st.metric(
+        "Columns",
+        len(dataset.columns)
+    )
+
+
+with dataset_metric3:
+
+    diabetes_count = int(
+        (
+            dataset["Outcome"]
+            == 1
+        ).sum()
+    )
+
+    st.metric(
+        "Outcome = 1",
+        diabetes_count
+    )
+
+
+with dataset_metric4:
+
+    non_diabetes_count = int(
+        (
+            dataset["Outcome"]
+            == 0
+        ).sum()
+    )
+
+    st.metric(
+        "Outcome = 0",
+        non_diabetes_count
+    )
+
+
+# =========================================================
+# FULL DATASET
+# =========================================================
+
+with st.expander(
+    "View the full diabetes dataset",
+    expanded=False
+):
+
+    st.caption(
+        "Scroll vertically or horizontally to inspect the original records."
+    )
+
+    st.dataframe(
+        dataset,
+        use_container_width=True,
+        height=420
+    )
+
+
+# =========================================================
+# DATASET SUMMARY
+# =========================================================
+
+with st.expander(
+    "View summary statistics",
+    expanded=False
+):
+
+    summary = (
+        dataset
+        .describe()
+        .T
+        .round(2)
+    )
+
+    st.dataframe(
+        summary,
+        use_container_width=True
+    )
+
+
+# =========================================================
+# ZERO / MISSING-VALUE CONTEXT
+# =========================================================
+
+with st.expander(
+    "View preprocessing context",
+    expanded=False
+):
+
+    zero_missing_columns = [
+        "Glucose",
+        "BloodPressure",
+        "SkinThickness",
+        "Insulin",
+        "BMI"
+    ]
+
+
+    zero_summary = pd.DataFrame(
+        {
+            "Feature": zero_missing_columns,
+
+            "Zero values in original dataset": [
+                int(
+                    (
+                        dataset[column]
+                        == 0
+                    ).sum()
+                )
+
+                for column
+                in zero_missing_columns
+            ]
+        }
+    )
+
+
+    st.markdown(
+        """
+        In the supplied model-development workflow,
+        zero values in selected medical measurements
+        are treated as missing values before preprocessing.
+        """
+    )
+
+
+    st.dataframe(
+        zero_summary,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+# =========================================================
+# OUTCOME DISTRIBUTION
+# =========================================================
+
+with st.expander(
+    "View diabetes outcome distribution",
+    expanded=False
+):
+
+    outcome_counts = (
+        dataset["Outcome"]
+        .value_counts()
+        .sort_index()
+    )
+
+
+    outcome_table = pd.DataFrame(
+        {
+            "Outcome": [
+                "0 - No diabetes",
+                "1 - Diabetes"
+            ],
+
+            "Number of records": [
+                int(
+                    outcome_counts.get(
+                        0,
+                        0
+                    )
+                ),
+
+                int(
+                    outcome_counts.get(
+                        1,
+                        0
+                    )
+                )
+            ]
+        }
+    )
+
+
+    st.dataframe(
+        outcome_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    chart_data = pd.DataFrame(
+        {
+            "Records": [
+                int(
+                    outcome_counts.get(
+                        0,
+                        0
+                    )
+                ),
+
+                int(
+                    outcome_counts.get(
+                        1,
+                        0
+                    )
+                )
+            ]
+        },
+
+        index=[
+            "No diabetes",
+            "Diabetes"
+        ]
+    )
+
+
+    st.bar_chart(
+        chart_data
+    )
 
 
 # =========================================================
@@ -2058,9 +2898,13 @@ render_html("""
 
 <strong>Important:</strong>
 
-This application is an educational diabetes screening project.
+This application was developed for educational purposes.
 Its output is generated by a machine learning model and does not
 provide a medical diagnosis or replace professional medical advice.
+
+The Scenario Explorer demonstrates how model output may change
+when selected inputs are adjusted. It should not be interpreted
+as a prediction of how a person's health will change.
 
 </div>
 """)
